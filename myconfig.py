@@ -25,7 +25,7 @@ CAMERA_TYPE = "CSIC"   # (PICAM|WEBCAM|CVCAM|CSIC|V4L|MOCK)
 # IMAGE_H = 120
 # IMAGE_DEPTH = 3         # default RGB=3, make 1 for mono
 # CAMERA_FRAMERATE = DRIVE_LOOP_HZ
-# 
+CSIC_CAM_GSTREAMER_FLIP_PARM=2
 # #9865, over rides only if needed, ie. TX2..
 # PCA9685_I2C_ADDR = 0x40     #I2C address, use i2cdetect to validate this number
 PCA9685_I2C_BUSNUM = 1   #None will auto detect, which is fine on the pi. But other platforms should specify the bus num.

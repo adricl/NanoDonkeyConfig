@@ -438,6 +438,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
 
                     for record in batch_data:
                         #get image data if we don't already have it
+                        angle = record['angle']
                         if record['img_data'] is None:
                             filename = record['image_path']
                             
@@ -447,7 +448,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                                 break
                             
                             if aug:
-                                img_arr = augment_image(img_arr)
+                                img_arr, angle = augment_image(img_arr, angle=angle)
 
                             if cfg.CACHE_IMAGES:
                                 record['img_data'] = img_arr
@@ -465,7 +466,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                             inputs_bvh.append(record['behavior_arr'])
 
                         inputs_img.append(img_arr)
-                        angles.append(record['angle'])
+                        angles.append(angle)
                         throttles.append(record['throttle'])
 
                     if img_arr is None:
