@@ -11,7 +11,7 @@ You might need to do a: pip install scikit-learn
 
 
 Usage:
-    train.py [--tub=<tub1,tub2,..tubn>] [--file=<file> ...] (--model=<model>) [--transfer=<model>] [--type=(linear|latent|categorical|rnn|imu|behavior|3d|look_ahead)] [--continuous] [--aug]
+    train.py [--tub=<tub1,tub2,..tubn>] [--file=<file> ...] (--model=<model>) [--transfer=<model>] [--type=(linear|latent|categorical|rnn|imu|behavior|3d|look_ahead)] [--continuous] [--aug] [--flip]
 
 Options:
     -h --help        Show this screen.
@@ -110,7 +110,7 @@ def make_next_key(sample, index_offset):
     return tub_path + str(index)
 
 
-def collate_records(records, gen_records, opts):
+def collate_records(records, gen_records, opts, flip_images):
     '''
     open all the .json records from records list passed in,
     read their contents,
@@ -172,11 +172,14 @@ def collate_records(records, gen_records, opts):
             pass
 
         sample['img_data'] = None
-
+        sample['flip_img'] = 0
         #now assign test or val
         sample['train'] = (random.uniform(0., 1.0) > 0.2)
-
         gen_records[key] = sample
+
+        if flip_images and sample['train']:
+            sample['flip_img'] = 1
+            gen_records[key + "_flip"] = sample
 
 
 def save_json_and_weights(model, filename):
@@ -312,7 +315,7 @@ def on_best_model(cfg, model, model_filename):
             print("send failed")
     
 
-def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug):
+def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug, flip_images):
     '''
     use the specified data in tub_names to train an artifical neural network
     saves the output trained model as model_name
@@ -358,7 +361,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
 
     records = gather_records(cfg, tub_names, opts, verbose=True)
     print('collating %d records ...' % (len(records)))
-    collate_records(records, gen_records, opts)
+    collate_records(records, gen_records, opts, flip_images)
 
     def generator(save_best, opts, data, batch_size, isTrainSet=True, min_records_to_train=1000):
         
@@ -373,7 +376,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                 '''
                 records = gather_records(cfg, tub_names, opts)
                 if len(records) > num_records:
-                    collate_records(records, gen_records, opts)
+                    collate_records(records, gen_records, opts, flip_images)
                     new_num_rec = len(data)
                     if new_num_rec > num_records:
                         print('picked up', new_num_rec - num_records, 'new records!')
@@ -428,7 +431,8 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
 
                 batch_data.append(_record)
 
-                if len(batch_data) == batch_size:
+                if (flip_images and isTrainSet and len(batch_data) * 2 == batch_size) or \
+                    (len(batch_data) == batch_size):
                     inputs_img = []
                     inputs_imu = []
                     inputs_bvh = []
@@ -438,7 +442,6 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
 
                     for record in batch_data:
                         #get image data if we don't already have it
-                        angle = record['angle']
                         if record['img_data'] is None:
                             filename = record['image_path']
                             
@@ -448,14 +451,14 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                                 break
                             
                             if aug:
-                                img_arr, angle = augment_image(img_arr, angle=angle)
+                                img_arr = augment_image(img_arr)
 
                             if cfg.CACHE_IMAGES:
                                 record['img_data'] = img_arr
                         else:
                             img_arr = record['img_data']
                             
-                        if img_out:                            
+                        if img_out:
                             rz_img_arr = cv2.resize(img_arr, (127, 127)) / 255.0
                             out_img.append(rz_img_arr[:,:,0].reshape((127, 127, 1)))
                             
@@ -465,8 +468,16 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                         if has_bvh:
                             inputs_bvh.append(record['behavior_arr'])
 
+                        if record['flip_img']: 
+                            from PIL import Image
+                            image = Image.fromarray(img_arr)
+                            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                            inputs_img.append(np.array(image))
+                            angles.append(record['angle'] * -1)
+                            throttles.append(record['throttle'])
+
                         inputs_img.append(img_arr)
-                        angles.append(angle)
+                        angles.append(record['angle'])
                         throttles.append(record['throttle'])
 
                     if img_arr is None:
@@ -488,7 +499,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                         y = [np.array([angles, throttles])]
                     else:
                         y = [np.array(angles), np.array(throttles)]
-
+                    
                     yield X, y
 
                     batch_data = []
@@ -694,7 +705,7 @@ class SequencePredictionGenerator(keras.utils.Sequence):
 
         return np.array(images), np.array([])
 
-def sequence_train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug):
+def sequence_train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug, flip_images):
     '''
     use the specified data in tub_names to train an artifical neural network
     saves the output trained model as model_name
@@ -893,7 +904,7 @@ def sequence_train(cfg, tub_names, model_name, transfer_model, model_type, conti
     '''
 
 
-def multi_train(cfg, tub, model, transfer, model_type, continuous, aug):
+def multi_train(cfg, tub, model, transfer, model_type, continuous, aug, flip_images):
     '''
     choose the right regime for the given model type
     '''
@@ -901,7 +912,7 @@ def multi_train(cfg, tub, model, transfer, model_type, continuous, aug):
     if model_type in ("rnn",'3d','look_ahead'):
         train_fn = sequence_train
 
-    train_fn(cfg, tub, model, transfer, model_type, continuous, aug)
+    train_fn(cfg, tub, model, transfer, model_type, continuous, aug, flip_images)
 
 
 def prune(model, validation_generator, val_steps, cfg):
@@ -1029,10 +1040,11 @@ if __name__ == "__main__":
     model_type = args['--type']
     continuous = args['--continuous']
     aug = args['--aug']
+    flip_images = args['--flip']
     
     dirs = preprocessFileList( args['--file'] )
     if tub is not None:
         tub_paths = [os.path.expanduser(n) for n in tub.split(',')]
         dirs.extend( tub_paths )
 
-    multi_train(cfg, dirs, model, transfer, model_type, continuous, aug)
+    multi_train(cfg, dirs, model, transfer, model_type, continuous, aug, flip_images)
