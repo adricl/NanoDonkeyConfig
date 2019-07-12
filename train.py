@@ -10,7 +10,7 @@ Basic usage should feel familiar: python train.py --model models/mypilot
 
 
 Usage:
-    train.py [--tub=<tub1,tub2,..tubn>] [--file=<file> ...] (--model=<model>) [--transfer=<model>] [--type=(linear|latent|categorical|rnn|imu|behavior|3d|look_ahead)] [--continuous] [--aug] [--flip]
+    train.py [--tub=<tub1,tub2,..tubn>] [--file=<file> ...] (--model=<model>) [--transfer=<model>] [--type=(linear|latent|categorical|rnn|imu|behavior|3d|look_ahead)] [--continuous] [--aug]
 
 Options:
     -h --help        Show this screen.
@@ -65,7 +65,7 @@ def make_next_key(sample, index_offset):
     return tub_path + str(index)
 
 
-def collate_records(records, gen_records, opts, flip_images):
+def collate_records(records, gen_records, opts):
     '''
     open all the .json records from records list passed in,
     read their contents,
@@ -132,7 +132,6 @@ def collate_records(records, gen_records, opts, flip_images):
 
         # Initialise 'train' to False
         sample['train'] = False
-        sample['flip_img'] = False
         
         # We need to maintain the correct train - validate ratio across the dataset, even if continous training
         # so don't add this sample to the main records list (gen_records) yet.
@@ -148,11 +147,6 @@ def collate_records(records, gen_records, opts, flip_images):
     for key in shufKeys:
         new_records[key]['train'] = True
         trainCount += 1
-        if flip_images:
-            record = new_records[key]
-            record['flip_img'] = True
-            new_records[key + "_flip"] = record
-            
         if trainCount >= targetTrainCount:
             break
     # Finally add all the new records to the existing list
@@ -291,7 +285,7 @@ def on_best_model(cfg, model, model_filename):
             print("send failed")
     
 
-def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug, flip_images):
+def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug):
     '''
     use the specified data in tub_names to train an artifical neural network
     saves the output trained model as model_name
@@ -339,7 +333,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
 
     records = gather_records(cfg, tub_names, opts, verbose=True)
     print('collating %d records ...' % (len(records)))
-    collate_records(records, gen_records, opts, flip_images)
+    collate_records(records, gen_records, opts)
 
     def generator(save_best, opts, data, batch_size, isTrainSet=True, min_records_to_train=1000):
         
@@ -354,7 +348,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                 '''
                 records = gather_records(cfg, tub_names, opts)
                 if len(records) > num_records:
-                    collate_records(records, gen_records, opts, flip_images)
+                    collate_records(records, gen_records, opts)
                     new_num_rec = len(data)
                     if new_num_rec > num_records:
                         print('picked up', new_num_rec - num_records, 'new records!')
@@ -409,8 +403,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
 
                 batch_data.append(_record)
 
-                if (flip_images and isTrainSet and len(batch_data) * 2 == batch_size) or \
-                    (len(batch_data) == batch_size):
+                if len(batch_data) == batch_size:
                     inputs_img = []
                     inputs_imu = []
                     inputs_bvh = []
@@ -436,7 +429,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                         else:
                             img_arr = record['img_data']
                             
-                        if img_out:
+                        if img_out:                            
                             rz_img_arr = cv2.resize(img_arr, (127, 127)) / 255.0
                             out_img.append(rz_img_arr[:,:,0].reshape((127, 127, 1)))
                             
@@ -445,14 +438,6 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                         
                         if has_bvh:
                             inputs_bvh.append(record['behavior_arr'])
-
-                        if record['flip_img']: 
-                            from PIL import Image
-                            image = Image.fromarray(img_arr)
-                            image = image.transpose(Image.FLIP_LEFT_RIGHT)
-                            inputs_img.append(np.array(image))
-                            angles.append(record['angle'] * -1)
-                            throttles.append(record['throttle'])
 
                         inputs_img.append(img_arr)
                         angles.append(record['angle'])
@@ -477,7 +462,7 @@ def train(cfg, tub_names, model_name, transfer_model, model_type, continuous, au
                         y = [np.array([angles, throttles])]
                     else:
                         y = [np.array(angles), np.array(throttles)]
-                    
+
                     yield X, y
 
                     batch_data = []
@@ -683,7 +668,7 @@ class SequencePredictionGenerator(keras.utils.Sequence):
 
         return np.array(images), np.array([])
 
-def sequence_train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug, flip_images):
+def sequence_train(cfg, tub_names, model_name, transfer_model, model_type, continuous, aug):
     '''
     use the specified data in tub_names to train an artifical neural network
     saves the output trained model as model_name
@@ -882,7 +867,7 @@ def sequence_train(cfg, tub_names, model_name, transfer_model, model_type, conti
     '''
 
 
-def multi_train(cfg, tub, model, transfer, model_type, continuous, aug, flip_images):
+def multi_train(cfg, tub, model, transfer, model_type, continuous, aug):
     '''
     choose the right regime for the given model type
     '''
@@ -890,7 +875,7 @@ def multi_train(cfg, tub, model, transfer, model_type, continuous, aug, flip_ima
     if model_type in ("rnn",'3d','look_ahead'):
         train_fn = sequence_train
 
-    train_fn(cfg, tub, model, transfer, model_type, continuous, aug, flip_images)
+    train_fn(cfg, tub, model, transfer, model_type, continuous, aug)
 
 
 def prune(model, validation_generator, val_steps, cfg):
@@ -1018,11 +1003,10 @@ if __name__ == "__main__":
     model_type = args['--type']
     continuous = args['--continuous']
     aug = args['--aug']
-    flip_images = args['--flip']
     
     dirs = preprocessFileList( args['--file'] )
     if tub is not None:
         tub_paths = [os.path.expanduser(n) for n in tub.split(',')]
         dirs.extend( tub_paths )
 
-    multi_train(cfg, dirs, model, transfer, model_type, continuous, aug, flip_images)
+    multi_train(cfg, dirs, model, transfer, model_type, continuous, aug)
