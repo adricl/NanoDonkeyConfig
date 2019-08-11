@@ -10,15 +10,16 @@ import json
 args = sys.argv[:]
 directory = args[1]
 
-
+print("Directory: " + directory)
 for file in glob.glob(directory + '*.json'):
+    data = {}
     with open(file, 'r') as fh:
         data = json.load(fh)
-        if ('cam/image_array' in data.keys()):
-            image = data['cam/image_array']
-            if not os.path.isfile(directory + image):
-                print("Json File: " + file + " image: " + image + " File does not exist\n")
-                os.remove(file)
+    if ('cam/image_array' in data.keys()):
+        image = data['cam/image_array']
+        if not os.path.isfile(directory + image):
+            print("Json File: " + file + " image: " + image + " File does not exist\n")
+            os.remove(file)
 
 # Filters throttles in reverse to 0 throttle
 for file in glob.glob(directory + '*.json'):
